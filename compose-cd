@@ -38,7 +38,7 @@ function usage() {
 	echo "  update      update projects"
 }
 
-function notify_discord() {
+function notify_slack() {
 	local webhook
 	local msg
 	local username
@@ -47,10 +47,10 @@ function notify_discord() {
 	msg="$2"
 	username="$3"
 	curl --silent -H "Accept: application/json" -H "Content-type: application/json" -X POST \
-		-d '{"username":"'"${username}"'","content":'"\"$msg\"}" "$webhook"
+		-d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook"
 }
 
-# require: DISCORD_WEBHOOK, NOTIFY_USERNAME(optional)
+# require: SLACK_WEBHOOK, NOTIFY_USERNAME(optional)
 function notify() {
 	local msg
 	local username
@@ -73,8 +73,9 @@ function notify() {
 		username="${NOTIFY_USERNAME}"
 	fi
 
-	if [ -n "${DISCORD_WEBHOOK+x}" ]; then
-		notify_discord "${DISCORD_WEBHOOK}" "$msg" "$username"
+	# Slackに通知
+	if [ -n "${SLACK_WEBHOOK+x}" ]; then
+		notify_slack "${SLACK_WEBHOOK}" "$msg" "$username"
 	fi
 }
 
@@ -515,17 +516,17 @@ function foreach_project() {
 # install command can take the following options to automatically configure global options:
 #   -s | --search-root
 #   -g | --git-pull-user
-#   -d | --discord-webhook
+#   -d | --slack-webhook
 function install() {
 	echo "install"
 
 	local search_root
 	local git_pull_user
-	local discord_webhook
+	local slack_webhook
 
 	# validate options
 	local options
-	if ! options=$(getopt --options "s:g:d:" --longoptions "search-root:,git-pull-user:,discord-webhook:" -- "$@"); then
+	if ! options=$(getopt --options "s:g:d:" --longoptions "search-root:,git-pull-user:,slack-webhook:" -- "$@"); then
 		echo "Incorrect options provided"
 		exit 1
 	fi
@@ -541,9 +542,9 @@ function install() {
 				shift
 				git_pull_user="$1"
 				;;
-			--discord-webhook | -d)
+			--slack-webhook | -d)
 				shift
-				discord_webhook="$1"
+				slack_webhook="$1"
 				;;
 			--)
 				shift
@@ -555,7 +556,7 @@ function install() {
 
 	if [ -z ${search_root+x} ]; then read -rp "search root> " search_root; fi
 	if [ -z ${git_pull_user+x} ]; then read -rp "git pull user> " git_pull_user; fi
-	if [ -z ${discord_webhook+x} ]; then read -rp "Discord webhook URL> " discord_webhook; fi
+	if [ -z ${slack_webhook+x} ]; then read -rp "Slack webhook URL> " slack_webhook; fi
 
 	mkdir -p /etc/compose-cd
 	tee /etc/compose-cd/config <<EOS
@@ -568,7 +569,7 @@ SEARCH_ROOT="${search_root}"
 
 GIT_PULL_USER="${git_pull_user}"
 
-DISCORD_WEBHOOK="${discord_webhook}"
+SLACK_WEBHOOK="${slack_webhook}"
 EOS
 
 	load_global_config

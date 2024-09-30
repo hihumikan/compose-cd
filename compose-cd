@@ -1,516 +1,367 @@
 #!/bin/bash
 
-COMPOSE_CD_VER_MAJOR='0'
-COMPOSE_CD_VER_MINOR='6'
-COMPOSE_CD_VER_PATCH='1'
+COMPOSE_CD_VER_MAJOR='1'
+COMPOSE_CD_VER_MINOR='0'
+COMPOSE_CD_VER_PATCH='0'
 COMPOSE_CD_VER_PRE=''
 
-#function docker-compose(){
-#	local p=`pwd`
-#	echo "[compose-mock]:$p $1 $2"
-#}
-
 function compose() {
-	# shellcheck disable=SC2068
-	#echo $COMPOSE_IMPL $@
-
-	# shellcheck disable=SC2068
-	$COMPOSE_IMPL $@
+    # shellcheck disable=SC2068
+    $COMPOSE_IMPL "$@"
 }
 
 function version() {
-	local compose_cd_ver
+    local compose_cd_ver
 
-	compose_cd_ver="${COMPOSE_CD_VER_MAJOR}.${COMPOSE_CD_VER_MINOR}.${COMPOSE_CD_VER_PATCH}"
-	if [ -n "${COMPOSE_CD_VER_PRE}" ]; then
-		compose_cd_ver="${compose_cd_ver}-${COMPOSE_CD_VER_PRE}"
-	fi
-	echo "${compose_cd_ver}"
+    compose_cd_ver="${COMPOSE_CD_VER_MAJOR}.${COMPOSE_CD_VER_MINOR}.${COMPOSE_CD_VER_PATCH}"
+    if [ -n "${COMPOSE_CD_VER_PRE}" ]; then
+        compose_cd_ver="${compose_cd_ver}-${COMPOSE_CD_VER_PRE}"
+    fi
+    echo "${compose_cd_ver}"
 }
 
 function usage() {
-	echo "usage> compose-cd [COMMAND]"
-	echo "commands:"
-	echo "  help        show this usage"
-	echo "  install     install compose-cd"
-	echo "  uninstall   uninstall compose-cd"
-	echo "  status      check status"
-	echo "  update      update projects"
+    echo "usage> compose-cd [COMMAND]"
+    echo "commands:"
+    echo "  help        show this usage"
+    echo "  install     install compose-cd"
+    echo "  uninstall   uninstall compose-cd"
+    echo "  status      check status"
+    echo "  update      update projects"
 }
 
 function notify_slack() {
-	local webhook
-	local msg
-	local username
+    local webhook
+    local msg
+    local username
 
-	webhook="$1"
-	msg="$2"
-	username="$3"
-	curl --silent -H "Accept: application/json" -H "Content-type: application/json" -X POST \
-		-d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook"
+    webhook="$1"
+    msg="$2"
+    username="$3"
+    curl --silent -H "Accept: application/json" -H "Content-type: application/json" -X POST \
+        -d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook"
 }
 
 # require: SLACK_WEBHOOK, NOTIFY_USERNAME(optional)
 function notify() {
-	local msg
-	local username
+    local msg
+    local username
 
-	if [ -z ${2+x} ]; then
-		if [ -z "${project}" ]; then
-			msg="$1"
-		else
-			msg="[${project}] $1"
-		fi
-	else
-		msg="$2$1"
-	fi
+    if [ -z ${2+x} ]; then
+        if [ -z "${project}" ]; then
+            msg="$1"
+        else
+            msg="[${project}] $1"
+        fi
+    else
+        msg="$2$1"
+    fi
 
-	echo "$msg"
+    echo "$msg"
 
-	# notify username(default: compose-cd)
-	username="compose-cd"
-	if [ -n "${NOTIFY_USERNAME+x}" ]; then
-		username="${NOTIFY_USERNAME}"
-	fi
+    # notify username(default: compose-cd)
+    username="compose-cd"
+    if [ -n "${NOTIFY_USERNAME+x}" ]; then
+        username="${NOTIFY_USERNAME}"
+    fi
 
-	# Slackに通知
-	if [ -n "${SLACK_WEBHOOK+x}" ]; then
-		notify_slack "${SLACK_WEBHOOK}" "$msg" "$username"
-	fi
+    # Slackに通知
+    if [ -n "${SLACK_WEBHOOK+x}" ]; then
+        notify_slack "${SLACK_WEBHOOK}" "$msg" "$username"
+    fi
 }
 
 function notify_test() {
-	notify "test"
+    notify "test"
 }
 
 function compose_log() {
-	local log_level
-	local msg
+    local log_level
+    local msg
 
-	log_level="$1"
-	shift
+    log_level="$1"
+    shift
 
-	# shellcheck disable=SC2116
-	msg=$(echo "$@")
+    # shellcheck disable=SC2116
+    msg=$(echo "$@")
 
-	case $log_level in
-		"echo")
-			echo "$@"
-			;;
-		"notify")
-			notify "$msg"
-			;;
-	esac
+    case $log_level in
+        "echo")
+            echo "$@"
+            ;;
+        "notify")
+            notify "$msg"
+            ;;
+    esac
 }
 
 function load_global_config() {
-	if [ ! -e "/etc/compose-cd/config" ]; then
-		echo "/etc/compose-cd/config not found"
-		exit 1
-	fi
-	# shellcheck disable=SC1091
-	source /etc/compose-cd/config
+    if [ ! -e "/etc/compose-cd/config" ]; then
+        echo "/etc/compose-cd/config not found"
+        exit 1
+    fi
+    # shellcheck disable=SC1091
+    source /etc/compose-cd/config
 
-	# version compatibility check
-	if [ "${COMPOSE_CD_VER_MAJOR}" != "${VER_MAJOR}" ]; then
-		compose_log notify "[warn] major version mismatch!!!: ${COMPOSE_CD_VER_MAJOR} != ${VER_MAJOR}"
-	fi
-	if [ "${COMPOSE_CD_VER_MINOR}" != "${VER_MINOR}" ]; then
-		compose_log notify "[warn] minor version mismatch!!!: ${COMPOSE_CD_VER_MINOR} != ${VER_MINOR}"
-	fi
+    # version compatibility check
+    if [ "${COMPOSE_CD_VER_MAJOR}" != "${VER_MAJOR}" ]; then
+        compose_log notify "[warn] major version mismatch!!!: ${COMPOSE_CD_VER_MAJOR} != ${VER_MAJOR}"
+    fi
+    if [ "${COMPOSE_CD_VER_MINOR}" != "${VER_MINOR}" ]; then
+        compose_log notify "[warn] minor version mismatch!!!: ${COMPOSE_CD_VER_MINOR} != ${VER_MINOR}"
+    fi
 
-	# set default compose implementation
-	if [ -z ${COMPOSE_IMPL+x} ]; then
-		COMPOSE_IMPL="docker compose"
-	fi
+    # set default compose implementation
+    if [ -z ${COMPOSE_IMPL+x} ]; then
+        COMPOSE_IMPL="docker compose"
+    fi
 }
 
 function load_config() {
-	local ret
-	ret=0
+    local ret
+    ret=0
 
-	compose_log echo -n "[$proj:load config] "
-	if [ ! -e ./.compose-cd ]; then
-		compose_log echo "config file not found"
-		return
-	fi
-	# shellcheck disable=SC1091
-	source ./.compose-cd # super config system
-	if [ -z ${UPDATE_REPO_ONLY+x} ]; then UPDATE_REPO_ONLY=false; fi
-	if [ -z ${UPDATE_IMAGE_ONLY+x} ]; then UPDATE_IMAGE_ONLY=false; fi
+    compose_log echo -n "[$proj:load config] "
+    if [ ! -e ./.compose-cd ]; then
+        compose_log echo "config file not found"
+        return
+    fi
+    # shellcheck disable=SC1091
+    source ./.compose-cd # super config system
+    if [ -z ${UPDATE_REPO_ONLY+x} ]; then UPDATE_REPO_ONLY=false; fi
 
-	if [ -z ${UPDATE_IMAGE_BY_REPO+x} ]; then UPDATE_IMAGE_BY_REPO=false; fi
+    if [ -v RESTRICT_HOSTNAME_PATTERN ]; then
+        if ! expr "$(hostname)" : "${RESTRICT_HOSTNAME_PATTERN}" >/dev/null; then
+            # restricted but not match
+            ret=1 # skip update
+        fi
+    fi
 
-	if [ -z ${PRIVATE_IMAGE+x} ]; then PRIVATE_IMAGE=false; fi
-
-	if [ -z ${REPO_GIT_REMOTE+x} ]; then REPO_GIT_REMOTE="origin"; fi
-
-	if [ -z ${RESTART_WITH_BUILD+x} ]; then RESTART_WITH_BUILD=false; fi
-
-	if [ -v RESTRICT_HOSTNAME_PATTERN ]; then
-		if ! expr "$(hostname)" : "${RESTRICT_HOSTNAME_PATTERN}" >/dev/null; then
-			# restricted but not match
-			ret=1 # skip update
-		fi
-	fi
-
-	if "$UPDATE_REPO_ONLY" && "$UPDATE_IMAGE_ONLY"; then
-		compose_log echo "UPDATE_REPO_ONLY and UPDATE_IMAGE_ONLY are true. This is something wrong."
-		exit 1
-	fi
-	if "$UPDATE_IMAGE_ONLY" && "$UPDATE_IMAGE_BY_REPO"; then
-		compose_log echo "UPDATE_IMAGE_ONLY and UPDATE_IMAGE_BY_REPO are true. This is something wrong."
-		exit 1
-	fi
-
-	compose_log echo "ok"
-	return $ret
+    compose_log echo "ok"
+    return $ret
 }
 
 function service_up() {
-	compose_log notify "starting service..."
-	if ! "$RESTART_WITH_BUILD"; then
-		compose up -d 2>/dev/null
-	else
-		compose_log notify "start build..."
-		compose up -d --build 2>/dev/null
-		compose_log notify "finish build"
-	fi
-	compose_log notify "service is up!"
+    compose_log notify "starting service..."
+    if ! "$RESTART_WITH_BUILD"; then
+        compose up -d 2>/dev/null
+    else
+        compose_log notify "start build..."
+        compose up -d --build 2>/dev/null
+        compose_log notify "finish build"
+    fi
+    compose_log notify "service is up!"
 }
 
 function service_down() {
-	compose down 2>/dev/null
-	compose_log notify "service is down"
-}
-
-function get_remote_image() {
-	local registry
-	local registry_auth
-	local image
-	local tag
-	local registry_token
-	local manifest
-
-	registry=$1
-	image=$2
-	tag=$3
-
-	if [ "${registry}" = "hub.docker.com" ]; then
-		registry="registry-1.docker.io"
-		registry_auth="auth.docker.io"
-		registry_srv="registry.docker.io"
-	else
-		registry_auth=${registry}
-		registry_srv=${registry}
-	fi
-
-	#registry_auth="ghcr.io"
-	#registry_auth="auth.docker.io"
-
-	#echo ${registry_auth}
-
-	if ${PRIVATE_IMAGE}; then
-		#echo "private image"
-		registry_token=$(curl --silent \
-			-u "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" \
-			"https://${registry_auth}/token?scope=repository:${image}:pull&service=${registry_srv}" |
-			jq -r '.token')
-	else
-		#echo "public image"
-		registry_token=$(curl --silent \
-			"https://${registry_auth}/token?scope=repository:${image}:pull&service=${registry_srv}" |
-			jq -r '.token')
-	fi
-
-	#echo $registry_token
-
-	compose_log echo -n "${tag} "
-	manifest=$(curl --silent \
-		--header "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-		--header "Authorization: Bearer ${registry_token}" \
-		"https://${registry}/v2/${image}/manifests/${tag}")
-
-	if echo "${manifest}" | grep 'errors'; then
-		compose_log echo "${manifest}" 1>&2
-		exit 1
-	fi
-
-	compose_log echo "${manifest}" | jq -r '.config.digest'
+    compose down 2>/dev/null
+    compose_log notify "service is down"
 }
 
 function git() {
-	# shellcheck disable=SC2153
-	sudo -u "$GIT_PULL_USER" git "$@"
+    # shellcheck disable=SC2153
+    sudo -u "$GIT_PULL_USER" git "$@"
 }
 
 # require: GIT_PULL_USER
 function update_repo() {
-	local branch
-	local local_commit
-	local remote_commit
-	local apply_list
-	local apply_list_expand
-	local is_restart
-	local git_remote
+    local branch
+    local local_commit
+    local remote_commit
+    local apply_list
+    local apply_list_expand
+    local is_restart
+    local git_remote
 
-	git_remote="${REPO_GIT_REMOTE}"
+    git_remote="${REPO_GIT_REMOTE}"
 
-	compose_log echo -n "[$project:update repository] "
+    compose_log echo -n "[$project:update repository] "
 
-	branch=$(git symbolic-ref --short HEAD)
-	local_commit=$(git rev-parse HEAD)
-	remote_commit=$(git ls-remote "${git_remote}" "${branch}" | awk '{print $1}')
+    branch=$(git symbolic-ref --short HEAD)
+    local_commit=$(git rev-parse HEAD)
+    remote_commit=$(git ls-remote "${git_remote}" "${branch}" | awk '{print $1}')
 
-	if [ -z "$remote_commit" ]; then
-		compose_log notify "error: could not get remote commit"
-		compose_log echo "branch: ${branch}"
-		return 2
-	fi
+    if [ -z "$remote_commit" ]; then
+        compose_log notify "error: could not get remote commit"
+        compose_log echo "branch: ${branch}"
+        return 2
+    fi
 
-	if [[ $local_commit = "$remote_commit" ]]; then
-		# no update
-		compose_log echo "pass"
-		return 1
-	fi
+    if [[ $local_commit = "$remote_commit" ]]; then
+        # no update
+        compose_log echo "pass"
+        return 1
+    fi
 
-	compose_log echo "pull start"
-	local local_commit_link
-	local remote_commit_link
-	local_commit_link="[$local_commit]($(git remote get-url "${git_remote}")/commit/${local_commit})"
-	remote_commit_link="[$remote_commit]($(git remote get-url "${git_remote}")/commit/${remote_commit})"
-	compose_log notify "local(${local_commit_link}) -> remote(${remote_commit_link})"
+    compose_log echo "pull start"
+    local local_commit_link
+    local remote_commit_link
+    local_commit_link="[$local_commit]($(git remote get-url "${git_remote}")/commit/${local_commit})"
+    remote_commit_link="[$remote_commit]($(git remote get-url "${git_remote}")/commit/${remote_commit})"
+    compose_log notify "local(${local_commit_link}) -> remote(${remote_commit_link})"
 
-	git pull "${git_remote}" "$branch"
+    git pull "${git_remote}" "$branch"
 
-	if "$UPDATE_IMAGE_BY_REPO"; then
-		compose_log notify "pull image by repo..."
-		compose pull --quiet
-	fi
-
-	# check apply-list
-	if [ ! -e .compose-apply ]; then
-		return
-	fi
-	apply_list=".compose-cd
+    # check apply-list
+    if [ ! -e .compose-apply ]; then
+        # If you don't use apply list, always trigger restart
+        is_restart=true
+    else
+        apply_list=".compose-cd
 $(cat .compose-apply)"
 
-	apply_list_expand=""
-	for a in $apply_list; do
-		local expand
-		expand=$(find "$a")
-		apply_list_expand="${apply_list_expand}
+        apply_list_expand=""
+        for a in $apply_list; do
+            local expand
+            expand=$(find "$a" 2>/dev/null)
+            apply_list_expand="${apply_list_expand}
 ${expand}"
-	done
+        done
 
-	is_restart=false
-	set -f
-	for a in $apply_list_expand; do
-		if echo "$a" | grep -q '\*'; then
-			compose_log notify "error: remain wildcard"
-			return 2
-		fi
+        is_restart=false
+        set -f
+        for a in $apply_list_expand; do
+            if echo "$a" | grep -q '\*'; then
+                compose_log notify "error: remain wildcard"
+                return 2
+            fi
 
-		# non top-level .compose-cd(monorepo): #30
-		a="$(git rev-parse --show-prefix)${a}"
-		# echo "check: $a"
+            # non top-level .compose-cd(monorepo): #30
+            a="$(git rev-parse --show-prefix)${a}"
+            # echo "check: $a"
 
-		# exact match
-		if git diff --name-only "${local_commit}" | grep "^${a}$"; then
-			is_restart=true
-			compose_log notify "apply: $a"
-			continue
-		fi
-	done
+            # exact match
+            if git diff --name-only "${local_commit}" | grep "^${a}$"; then
+                is_restart=true
+                compose_log notify "apply: $a"
+                continue
+            fi
+        done
+    fi
 
-	if ! $is_restart; then
-		compose_log notify "skip restart: outside of .compose-apply"
-		return 1
-	fi
-}
-
-function update_image() {
-	local img_location
-	local img_tag
-	local local_img
-	local remote_img
-	local remote_img_id
-
-	compose_log echo -n "[$project:update image] "
-
-	if [ -z ${REGISTRY+x} ]; then
-		compose_log echo "error: REGISTRY is not set"
-		return
-	fi
-	if [ -z ${IMAGE+x} ]; then
-		compose_log echo "error: REGISTRY is not set"
-		return
-	fi
-	img_location="${REGISTRY}/${IMAGE}" # like ghcr.io/sksat/kuso-subdomain-adder
-
-	if [ -z ${IMG_TAG+x} ]; then
-		compose_log echo "warning: IMG_TAG is not set"
-		img_tag="main"
-
-		compose_log echo -n "[$project:update image] "
-	else
-		img_tag="${IMG_TAG}"
-	fi
-
-	local_img=$(docker images --no-trunc --digests "${img_location}" --format '{{.Tag}} {{.ID}}' | grep "$img_tag")
-	if [ "$local_img" = "" ]; then
-		compose_log notify "error: local image is null!" ""
-		docker images --no-trunc --digests "${img_location}" --format '{{.Tag}} {{.ID}}'
-		return 2
-	fi
-
-	remote_img=$(get_remote_image "${REGISTRY}" "${IMAGE}" "${img_tag}")
-	remote_img_id=$(cut -d' ' -f 2 <<<"${remote_img}")
-
-	compose_log echo "remote_img_id: ${remote_img_id}"
-	if echo "${remote_img}" | grep -q 'null' || [ "$remote_img_id" = "" ]; then
-		compose_log notify "error: remote image is null!" ""
-		compose_log echo "registry: ${REGISTRY}"
-		compose_log echo "image: ${IMAGE}"
-		compose_log echo "tag: ${img_tag}"
-		return 2
-	fi
-
-	if [[ $local_img = "$remote_img" ]]; then
-		# no update
-		compose_log echo "pass"
-		return 1
-	fi
-
-	compose_log echo "pull start"
-	compose_log notify "update image: ${local_img} ===> ${remote_img}"
-	compose pull --quiet
-	compose_log echo "[$project:update image] done"
+    if ! $is_restart; then
+        compose_log notify "skip restart: no relevant changes detected"
+        return 1
+    fi
 }
 
 function project_update() {
-	local proj=$1
-	local rc
-	local rr
-	local ri
+    local proj=$1
+    local rc
+    local rr
 
-	local before_script
-	local after_script
+    local before_script
+    local after_script
 
-	load_config
-	rc=$?
-	if [ $rc = 1 ]; then
-		# skip update
-		compose_log echo "skip update"
-		return
-	fi
+    load_config
+    rc=$?
+    if [ $rc = 1 ]; then
+        # skip update
+        compose_log echo "skip update"
+        return
+    fi
 
-	rr=1
-	ri=1
-	if ! $UPDATE_IMAGE_ONLY; then
-		update_repo
-		rr=$?
-	fi
-	if ! "$UPDATE_REPO_ONLY"; then
-		update_image
-		ri=$?
-	fi
+    rr=1
+    if ! $UPDATE_REPO_ONLY; then
+        update_repo
+        rr=$?
+    fi
 
-	# no update
-	if [ $rr = 1 ] && [ $ri = 1 ]; then
-		compose_log echo "no update"
-		return
-	fi
+    # no update
+    if [ $rr = 1 ]; then
+        compose_log echo "no update"
+        return
+    fi
 
-	# error
-	if [ $rr = 2 ] || [ $ri = 2 ]; then
-		return
-	fi
+    # error
+    if [ $rr = 2 ]; then
+        return
+    fi
 
-	if [ -z ${BEFORE_RESTART+x} ]; then
-		before_script=""
-	else
-		before_script=${BEFORE_RESTART}
-	fi
-	if [ -z ${AFTER_RESTART+x} ]; then
-		after_script=""
-	else
-		after_script=${AFTER_RESTART}
-	fi
+    if [ -z ${BEFORE_RESTART+x} ]; then
+        before_script=""
+    else
+        before_script=${BEFORE_RESTART}
+    fi
+    if [ -z ${AFTER_RESTART+x} ]; then
+        after_script=""
+    else
+        after_script=${AFTER_RESTART}
+    fi
 
-	# before script
-	if [ -n "${before_script}" ]; then
-		if ! bash -c "${before_script}"; then
-			compose_log notify "skip restart: before script exit with $?"
-			return
-		fi
-	fi
+    # before script
+    if [ -n "${before_script}" ]; then
+        if ! bash -c "${before_script}"; then
+            compose_log notify "skip restart: before script exit with $?"
+            return
+        fi
+    fi
 
-	# todo: running check
+    # todo: running check
 
-	compose_log echo "restart service..."
-	service_down
-	service_up
+    compose_log echo "restart service..."
+    service_down
+    service_up
 
-	# after script
-	if [ -n "${after_script}" ]; then
-		bash -c "${after_script}"
-	fi
+    # after script
+    if [ -n "${after_script}" ]; then
+        bash -c "${after_script}"
+    fi
 }
 
 function project_status() {
-	local proj
-	local services
+    local proj
+    local services
 
-	proj=$1
+    proj=$1
 
-	compose_log echo -n "[$proj:status] "
-	services=$(compose ps -q)
+    compose_log echo -n "[$proj:status] "
+    services=$(compose ps -q)
 
-	if [ -n "$services" ]; then
-		compose_log echo "up"
-	else
-		compose_log echo "down"
-	fi
+    if [ -n "$services" ]; then
+        compose_log echo "up"
+    else
+        compose_log echo "down"
+    fi
 }
 
 function foreach_project() {
-	local search_root
-	local cfgs
+    local search_root
+    local cfgs
 
-	if [ -z ${SEARCH_ROOT+x} ]; then
-		compose_log echo "error: SEARCH_ROOT is not set"
-		return
-	fi
-	search_root=${SEARCH_ROOT}
+    if [ -z ${SEARCH_ROOT+x} ]; then
+        compose_log echo "error: SEARCH_ROOT is not set"
+        return
+    fi
+    search_root=${SEARCH_ROOT}
 
-	# execute in subshell
-	(
-		cd "${search_root}" || {
-			compose_log echo "error: SEARCH_ROOT(${search_root}) not found"
-			exit 1
-		}
-		if [ -e compose-cd.lock ]; then
-			compose_log echo "warn: lock file exists"
-			exit 0
-		fi
-		touch compose-cd.lock
-		cfgs=$(find . -maxdepth 5 -type f -name '.compose-cd')
-		for c in $cfgs; do
-			local proj
-			proj=$(dirname "$c")
-			project=$proj # global
+    # execute in subshell
+    (
+        cd "${search_root}" || {
+            compose_log echo "error: SEARCH_ROOT(${search_root}) not found"
+            exit 1
+        }
+        if [ -e compose-cd.lock ]; then
+            compose_log echo "warn: lock file exists"
+            exit 0
+        fi
+        touch compose-cd.lock
+        cfgs=$(find . -maxdepth 5 -type f -name '.compose-cd')
+        for c in $cfgs; do
+            local proj
+            proj=$(dirname "$c")
+            project=$proj # global
 
-			(
-				cd "$proj" || {
-					compose_log echo "[$proj] error: project not fouund"
-					exit 1
-				}
-				eval "$1 $proj"
-			)
-		done
-		rm compose-cd.lock
-	)
+            (
+                cd "$proj" || {
+                    compose_log echo "[$proj] error: project not found"
+                    exit 1
+                }
+                eval "$1 $proj"
+            )
+        done
+        rm compose-cd.lock
+    )
 }
 
 # install command can take the following options to automatically configure global options:
@@ -518,48 +369,48 @@ function foreach_project() {
 #   -g | --git-pull-user
 #   -d | --slack-webhook
 function install() {
-	echo "install"
+    echo "install"
 
-	local search_root
-	local git_pull_user
-	local slack_webhook
+    local search_root
+    local git_pull_user
+    local slack_webhook
 
-	# validate options
-	local options
-	if ! options=$(getopt --options "s:g:d:" --longoptions "search-root:,git-pull-user:,slack-webhook:" -- "$@"); then
-		echo "Incorrect options provided"
-		exit 1
-	fi
-	eval set -- "$options"
+    # validate options
+    local options
+    if ! options=$(getopt --options "s:g:d:" --longoptions "search-root:,git-pull-user:,slack-webhook:" -- "$@"); then
+        echo "Incorrect options provided"
+        exit 1
+    fi
+    eval set -- "$options"
 
-	while true; do
-		case $1 in
-			--search-root | -s)
-				shift
-				search_root="$1"
-				;;
-			--git-pull-user | -g)
-				shift
-				git_pull_user="$1"
-				;;
-			--slack-webhook | -d)
-				shift
-				slack_webhook="$1"
-				;;
-			--)
-				shift
-				break
-				;;
-		esac
-		shift
-	done
+    while true; do
+        case $1 in
+            --search-root | -s)
+                shift
+                search_root="$1"
+                ;;
+            --git-pull-user | -g)
+                shift
+                git_pull_user="$1"
+                ;;
+            --slack-webhook | -d)
+                shift
+                slack_webhook="$1"
+                ;;
+            --)
+                shift
+                break
+                ;;
+        esac
+        shift
+    done
 
-	if [ -z ${search_root+x} ]; then read -rp "search root> " search_root; fi
-	if [ -z ${git_pull_user+x} ]; then read -rp "git pull user> " git_pull_user; fi
-	if [ -z ${slack_webhook+x} ]; then read -rp "Slack webhook URL> " slack_webhook; fi
+    if [ -z ${search_root+x} ]; then read -rp "search root> " search_root; fi
+    if [ -z ${git_pull_user+x} ]; then read -rp "git pull user> " git_pull_user; fi
+    if [ -z ${slack_webhook+x} ]; then read -rp "Slack webhook URL> " slack_webhook; fi
 
-	mkdir -p /etc/compose-cd
-	tee /etc/compose-cd/config <<EOS
+    mkdir -p /etc/compose-cd
+    tee /etc/compose-cd/config <<EOS
 VER_MAJOR="${COMPOSE_CD_VER_MAJOR}"
 VER_MINOR="${COMPOSE_CD_VER_MINOR}"
 VER_PATCH="${COMPOSE_CD_VER_PATCH}"
@@ -570,69 +421,76 @@ SEARCH_ROOT="${search_root}"
 GIT_PULL_USER="${git_pull_user}"
 
 SLACK_WEBHOOK="${slack_webhook}"
+REPO_GIT_REMOTE="origin"
+
+# Optional configurations
+# BEFORE_RESTART="echo 'Before restart script'"
+# AFTER_RESTART="echo 'After restart script'"
+# RESTART_WITH_BUILD=true
 EOS
 
-	load_global_config
-	compose_log notify "notify test" "[test] "
+    load_global_config
+    compose_log notify "notify test" "[test] "
 
-	cp ./compose-cd /usr/bin/compose-cd
-	cp ./compose-cd.service /etc/systemd/system/
-	cp ./compose-cd.timer /etc/systemd/system/
-	cp ./compose-cd-cleanup.service /etc/systemd/system/
-	cp ./compose-cd-cleanup.timer /etc/systemd/system/
+    cp ./compose-cd /usr/bin/compose-cd
+    cp ./compose-cd.service /etc/systemd/system/
+    cp ./compose-cd.timer /etc/systemd/system/
+    cp ./compose-cd-cleanup.service /etc/systemd/system/
+    cp ./compose-cd-cleanup.timer /etc/systemd/system/
 
-	systemctl daemon-reload
-	systemctl enable --now compose-cd.service
-	systemctl enable --now compose-cd.timer
-	systemctl enable --now compose-cd-cleanup.timer
+    systemctl daemon-reload
+    systemctl enable --now compose-cd.service
+    systemctl enable --now compose-cd.timer
+    systemctl enable --now compose-cd-cleanup.timer
 }
 
 function uninstall() {
-	echo "uninstall"
+    echo "uninstall"
 
-	systemctl stop compose-cd.timer
-	systemctl stop compose-cd.service
-	systemctl stop compose-cd-cleanup.timer
+    systemctl stop compose-cd.timer
+    systemctl stop compose-cd.service
+    systemctl stop compose-cd-cleanup.timer
 
-	rm /usr/bin/compose-cd
-	rm -r /etc/compose-cd
+    rm /usr/bin/compose-cd
+    rm -r /etc/compose-cd
 
-	rm /etc/systemd/system/compose-cd.timer
-	rm /etc/systemd/system/compose-cd.service
-	rm /etc/systemd/system/compose-cd-cleanup.timer
-	rm /etc/systemd/system/compose-cd-cleanup.service
-	systemctl daemon-reload
+    rm /etc/systemd/system/compose-cd.timer
+    rm /etc/systemd/system/compose-cd.service
+    rm /etc/systemd/system/compose-cd-cleanup.timer
+    rm /etc/systemd/system/compose-cd-cleanup.service
+    systemctl daemon-reload
 }
 
 function check_status() {
-	compose_log echo "check status"
+    compose_log echo "check status"
 
-	load_global_config
-	foreach_project project_status
+    load_global_config
+    foreach_project project_status
 }
 
 function update() {
-	compose_log echo "update"
+    compose_log echo "update"
 
-	load_global_config
-	foreach_project project_update
+    load_global_config
+    foreach_project project_update
 }
 
 function cleanup() {
-	compose_log echo "cleanup: container images"
-	docker image prune -a -f
+    compose_log echo "cleanup: container images"
+    docker image prune -a -f
 }
 
 case $1 in
-	"help") usage ;;
-	"version") version ;;
-	"notify-test") notify "test" ;;
-	"install")
-		shift
-		install "$@"
-		;;
-	"uninstall") uninstall ;;
-	"status") check_status ;;
-	"update") update ;;
-	"cleanup") cleanup ;;
+    "help") usage ;;
+    "version") version ;;
+    "notify-test") notify "test" ;;
+    "install")
+        shift
+        install "$@"
+        ;;
+    "uninstall") uninstall ;;
+    "status") check_status ;;
+    "update") update ;;
+    "cleanup") cleanup ;;
+    *) usage ;;
 esac

@@ -442,6 +442,9 @@ EOS
     systemctl enable --now compose-cd.service
     systemctl enable --now compose-cd.timer
     systemctl enable --now compose-cd-cleanup.timer
+
+	compose_log echo "Running initial update..."
+    /usr/bin/compose-cd update
 }
 
 function uninstall() {

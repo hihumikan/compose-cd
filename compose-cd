@@ -187,13 +187,13 @@ function update_repo() {
         is_restart=true
     else
         apply_list=".compose-cd
-$(cat .compose-apply)"
+    $(cat .compose-apply)"
         apply_list_expand=""
         for a in $apply_list; do
             local expand
             expand=$(find "$a" 2>/dev/null)
             apply_list_expand="${apply_list_expand}
-    ${expand}"
+        ${expand}"
         done
         is_restart=false
         set -f
@@ -317,6 +317,7 @@ function foreach_project() {
 
 # サービスとAPIのチェックを実行し通知
 function check_services_and_notify() {
+    load_global_config 
     compose_log echo "Running daily Docker and API check..."
     local all_containers_up=true
     local containers_status

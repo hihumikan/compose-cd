@@ -6,13 +6,11 @@ COMPOSE_CD_VER_PATCH='0'
 COMPOSE_CD_VER_PRE=''
 
 function compose() {
-    # shellcheck disable=SC2068
     $COMPOSE_IMPL "$@"
 }
 
 function version() {
     local compose_cd_ver
-
     compose_cd_ver="${COMPOSE_CD_VER_MAJOR}.${COMPOSE_CD_VER_MINOR}.${COMPOSE_CD_VER_PATCH}"
     if [ -n "${COMPOSE_CD_VER_PRE}" ]; then
         compose_cd_ver="${compose_cd_ver}-${COMPOSE_CD_VER_PRE}"
@@ -28,13 +26,14 @@ function usage() {
     echo "  uninstall   uninstall compose-cd"
     echo "  status      check status"
     echo "  update      update projects"
+    echo "  cleanup     cleanup container images"
+    echo "  check       perform daily Docker and API checks"
 }
 
 function notify_slack() {
     local webhook
     local msg
     local username
-
     webhook="$1"
     msg="$2"
     username="$3"
@@ -42,11 +41,9 @@ function notify_slack() {
         -d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook"
 }
 
-# require: SLACK_WEBHOOK, NOTIFY_USERNAME(optional)
 function notify() {
     local msg
     local username
-
     if [ -z ${2+x} ]; then
         if [ -z "${project}" ]; then
             msg="$1"
@@ -56,16 +53,11 @@ function notify() {
     else
         msg="$2$1"
     fi
-
     echo "$msg"
-
-    # notify username(default: compose-cd)
     username="compose-cd"
     if [ -n "${NOTIFY_USERNAME+x}" ]; then
         username="${NOTIFY_USERNAME}"
     fi
-
-    # Slackに通知
     if [ -n "${SLACK_WEBHOOK+x}" ]; then
         notify_slack "${SLACK_WEBHOOK}" "$msg" "$username"
     fi
@@ -78,13 +70,9 @@ function notify_test() {
 function compose_log() {
     local log_level
     local msg
-
     log_level="$1"
     shift
-
-    # shellcheck disable=SC2116
     msg=$(echo "$@")
-
     case $log_level in
         "echo")
             echo "$@"
@@ -100,18 +88,13 @@ function load_global_config() {
         echo "/etc/compose-cd/config not found"
         exit 1
     fi
-    # shellcheck disable=SC1091
     source /etc/compose-cd/config
-
-    # version compatibility check
     if [ "${COMPOSE_CD_VER_MAJOR}" != "${VER_MAJOR}" ]; then
         compose_log notify "[warn] major version mismatch!!!: ${COMPOSE_CD_VER_MAJOR} != ${VER_MAJOR}"
     fi
     if [ "${COMPOSE_CD_VER_MINOR}" != "${VER_MINOR}" ]; then
         compose_log notify "[warn] minor version mismatch!!!: ${COMPOSE_CD_VER_MINOR} != ${VER_MINOR}"
     fi
-
-    # set default compose implementation
     if [ -z ${COMPOSE_IMPL+x} ]; then
         COMPOSE_IMPL="docker compose"
     fi
@@ -120,23 +103,18 @@ function load_global_config() {
 function load_config() {
     local ret
     ret=0
-
     compose_log echo -n "[$proj:load config] "
     if [ ! -e ./.compose-cd ]; then
         compose_log echo "config file not found"
         return
     fi
-    # shellcheck disable=SC1091
-    source ./.compose-cd # super config system
+    source ./.compose-cd
     if [ -z ${UPDATE_REPO_ONLY+x} ]; then UPDATE_REPO_ONLY=false; fi
-
     if [ -v RESTRICT_HOSTNAME_PATTERN ]; then
         if ! expr "$(hostname)" : "${RESTRICT_HOSTNAME_PATTERN}" >/dev/null; then
-            # restricted but not match
-            ret=1 # skip update
+            ret=1
         fi
     fi
-
     compose_log echo "ok"
     return $ret
 }
@@ -159,11 +137,9 @@ function service_down() {
 }
 
 function git() {
-    # shellcheck disable=SC2153
     sudo -u "$GIT_PULL_USER" git "$@"
 }
 
-# require: GIT_PULL_USER
 function update_repo() {
     local branch
     local local_commit
@@ -172,44 +148,32 @@ function update_repo() {
     local apply_list_expand
     local is_restart
     local git_remote
-
     git_remote="${REPO_GIT_REMOTE}"
-
     compose_log echo -n "[$project:update repository] "
-
     branch=$(git symbolic-ref --short HEAD)
     local_commit=$(git rev-parse HEAD)
     remote_commit=$(git ls-remote "${git_remote}" "${branch}" | awk '{print $1}')
-
     if [ -z "$remote_commit" ]; then
         compose_log notify "error: could not get remote commit"
         compose_log echo "branch: ${branch}"
         return 2
     fi
-
     if [[ $local_commit = "$remote_commit" ]]; then
-        # no update
         compose_log echo "pass"
         return 1
     fi
-
     compose_log echo "pull start"
     local local_commit_link
     local remote_commit_link
     local_commit_link="[$local_commit]($(git remote get-url "${git_remote}")/commit/${local_commit})"
     remote_commit_link="[$remote_commit]($(git remote get-url "${git_remote}")/commit/${remote_commit})"
     compose_log notify "local(${local_commit_link}) -> remote(${remote_commit_link})"
-
     git pull "${git_remote}" "$branch"
-
-    # check apply-list
     if [ ! -e .compose-apply ]; then
-        # If you don't use apply list, always trigger restart
         is_restart=true
     else
         apply_list=".compose-cd
 $(cat .compose-apply)"
-
         apply_list_expand=""
         for a in $apply_list; do
             local expand
@@ -217,7 +181,6 @@ $(cat .compose-apply)"
             apply_list_expand="${apply_list_expand}
 ${expand}"
         done
-
         is_restart=false
         set -f
         for a in $apply_list_expand; do
@@ -225,12 +188,7 @@ ${expand}"
                 compose_log notify "error: remain wildcard"
                 return 2
             fi
-
-            # non top-level .compose-cd(monorepo): #30
             a="$(git rev-parse --show-prefix)${a}"
-            # echo "check: $a"
-
-            # exact match
             if git diff --name-only "${local_commit}" | grep "^${a}$"; then
                 is_restart=true
                 compose_log notify "apply: $a"
@@ -238,7 +196,6 @@ ${expand}"
             fi
         done
     fi
-
     if ! $is_restart; then
         compose_log notify "skip restart: no relevant changes detected"
         return 1
@@ -249,35 +206,26 @@ function project_update() {
     local proj=$1
     local rc
     local rr
-
     local before_script
     local after_script
-
     load_config
     rc=$?
     if [ $rc = 1 ]; then
-        # skip update
         compose_log echo "skip update"
         return
     fi
-
     rr=1
     if ! $UPDATE_REPO_ONLY; then
         update_repo
         rr=$?
     fi
-
-    # no update
     if [ $rr = 1 ]; then
         compose_log echo "no update"
         return
     fi
-
-    # error
     if [ $rr = 2 ]; then
         return
     fi
-
     if [ -z ${BEFORE_RESTART+x} ]; then
         before_script=""
     else
@@ -288,22 +236,15 @@ function project_update() {
     else
         after_script=${AFTER_RESTART}
     fi
-
-    # before script
     if [ -n "${before_script}" ]; then
         if ! bash -c "${before_script}"; then
             compose_log notify "skip restart: before script exit with $?"
             return
         fi
     fi
-
-    # todo: running check
-
     compose_log echo "restart service..."
     service_down
     service_up
-
-    # after script
     if [ -n "${after_script}" ]; then
         bash -c "${after_script}"
     fi
@@ -312,12 +253,9 @@ function project_update() {
 function project_status() {
     local proj
     local services
-
     proj=$1
-
     compose_log echo -n "[$proj:status] "
     services=$(compose ps -q)
-
     if [ -n "$services" ]; then
         compose_log echo "up"
     else
@@ -328,14 +266,11 @@ function project_status() {
 function foreach_project() {
     local search_root
     local cfgs
-
     if [ -z ${SEARCH_ROOT+x} ]; then
         compose_log echo "error: SEARCH_ROOT is not set"
         return
     fi
     search_root=${SEARCH_ROOT}
-
-    # execute in subshell
     (
         cd "${search_root}" || {
             compose_log echo "error: SEARCH_ROOT(${search_root}) not found"
@@ -350,8 +285,7 @@ function foreach_project() {
         for c in $cfgs; do
             local proj
             proj=$(dirname "$c")
-            project=$proj # global
-
+            project=$proj
             (
                 cd "$proj" || {
                     compose_log echo "[$proj] error: project not found"
@@ -364,25 +298,76 @@ function foreach_project() {
     )
 }
 
-# install command can take the following options to automatically configure global options:
-#   -s | --search-root
-#   -g | --git-pull-user
-#   -d | --slack-webhook
+function check_services_and_notify() {
+    compose_log echo "Running daily Docker and API check..."
+    local all_containers_up=true
+    local containers_status
+    local slack_message
+    containers_status=$(docker ps --format "{{.Names}}: {{.Status}}")
+    echo "Docker Containers Status:"
+    echo "$containers_status"
+    while IFS= read -r line; do
+        if [[ ! "$line" =~ Up ]]; then
+            all_containers_up=false
+            slack_message+=":warning: コンテナ *${line%%:*}* が起動していません。\n"
+        fi
+    done <<< "$containers_status"
+    if $all_containers_up; then
+        slack_message+=":white_check_mark: 全てのDockerコンテナが正常に起動しています。\n"
+    fi
+    local api_url="https://elpis-m1.kajilab.dev/"
+    local api_response
+    api_response=$(curl --silent --fail "$api_url")
+    if [ $? -ne 0 ]; then
+        slack_message+=":x: APIエンドポイント *${api_url}* へのアクセスに失敗しました。\n"
+    else
+        if ! command -v jq >/dev/null 2>&1; then
+            compose_log notify "error: jq is not installed. Please install jq to parse JSON responses."
+            return 1
+        fi
+        local status
+        local database
+        local timestamp
+        status=$(echo "$api_response" | jq -r '.status')
+        database=$(echo "$api_response" | jq -r '.database')
+        timestamp=$(echo "$api_response" | jq -r '.timestamp')
+        if [ "$status" == "ok" ] && [ "$database" == "reachable" ]; then
+            slack_message+=":white_check_mark: APIステータス: *${status}*\n:database: データベース: *${database}*\n:clock1: タイムスタンプ: *${timestamp}*\n"
+        else
+            slack_message+=":warning: APIステータスに異常があります。\nレスポンス: \`${api_response}\`\n"
+        fi
+    fi
+    notify "$slack_message"
+    compose_log echo "Daily check completed."
+}
+
+case $1 in
+    "help") usage ;;
+    "version") version ;;
+    "notify-test") notify "test" ;;
+    "install")
+        shift
+        install "$@"
+        ;;
+    "uninstall") uninstall ;;
+    "status") check_status ;;
+    "update") update ;;
+    "cleanup") cleanup ;;
+    "check") check_services_and_notify ;;
+    *) usage ;;
+esac
+
 function install() {
     echo "install"
-
     local search_root
     local git_pull_user
     local slack_webhook
-
-    # validate options
     local options
     if ! options=$(getopt --options "s:g:d:" --longoptions "search-root:,git-pull-user:,slack-webhook:" -- "$@"); then
         echo "Incorrect options provided"
         exit 1
     fi
     eval set -- "$options"
-
     while true; do
         case $1 in
             --search-root | -s)
@@ -404,11 +389,9 @@ function install() {
         esac
         shift
     done
-
     if [ -z ${search_root+x} ]; then read -rp "search root> " search_root; fi
     if [ -z ${git_pull_user+x} ]; then read -rp "git pull user> " git_pull_user; fi
     if [ -z ${slack_webhook+x} ]; then read -rp "Slack webhook URL> " slack_webhook; fi
-
     mkdir -p /etc/compose-cd
     tee /etc/compose-cd/config <<EOS
 VER_MAJOR="${COMPOSE_CD_VER_MAJOR}"
@@ -423,40 +406,61 @@ GIT_PULL_USER="${git_pull_user}"
 SLACK_WEBHOOK="${slack_webhook}"
 REPO_GIT_REMOTE="origin"
 
-# Optional configurations
-# BEFORE_RESTART="echo 'Before restart script'"
-# AFTER_RESTART="echo 'After restart script'"
-# RESTART_WITH_BUILD=true
 EOS
-
     load_global_config
     compose_log notify "notify test" "[test] "
-
     cp ./compose-cd /usr/bin/compose-cd
     cp ./compose-cd.service /etc/systemd/system/
     cp ./compose-cd.timer /etc/systemd/system/
     cp ./compose-cd-cleanup.service /etc/systemd/system/
     cp ./compose-cd-cleanup.timer /etc/systemd/system/
-
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "jqがインストールされていません。インストールを開始します。"
+        sudo apt-get update
+        sudo apt-get install -y jq
+    fi
     systemctl daemon-reload
     systemctl enable --now compose-cd.service
     systemctl enable --now compose-cd.timer
     systemctl enable --now compose-cd-cleanup.timer
-
-	compose_log echo "Running initial update..."
+    compose_log echo "Running initial update..."
     /usr/bin/compose-cd update
+    echo "Setting up daily check service and timer..."
+    tee /etc/systemd/system/compose-cd-check.service <<EOS
+[Unit]
+Description=Compose-CD Daily Check Service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/compose-cd check
+EOS
+    tee /etc/systemd/system/compose-cd-check.timer <<EOS
+[Unit]
+Description=Run Compose-CD Daily Check every day at 2:00 AM
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOS
+    systemctl daemon-reload
+    systemctl enable --now compose-cd-check.timer
+    compose_log echo "Daily check service and timer have been set up."
 }
 
 function uninstall() {
     echo "uninstall"
-
     systemctl stop compose-cd.timer
     systemctl stop compose-cd.service
     systemctl stop compose-cd-cleanup.timer
-
+    systemctl stop compose-cd-check.timer
+    systemctl disable compose-cd-check.timer
+    rm /etc/systemd/system/compose-cd-check.timer
+    rm /etc/systemd/system/compose-cd-check.service
     rm /usr/bin/compose-cd
     rm -r /etc/compose-cd
-
     rm /etc/systemd/system/compose-cd.timer
     rm /etc/systemd/system/compose-cd.service
     rm /etc/systemd/system/compose-cd-cleanup.timer
@@ -466,14 +470,12 @@ function uninstall() {
 
 function check_status() {
     compose_log echo "check status"
-
     load_global_config
     foreach_project project_status
 }
 
 function update() {
     compose_log echo "update"
-
     load_global_config
     foreach_project project_update
 }
@@ -482,18 +484,3 @@ function cleanup() {
     compose_log echo "cleanup: container images"
     docker image prune -a -f
 }
-
-case $1 in
-    "help") usage ;;
-    "version") version ;;
-    "notify-test") notify "test" ;;
-    "install")
-        shift
-        install "$@"
-        ;;
-    "uninstall") uninstall ;;
-    "status") check_status ;;
-    "update") update ;;
-    "cleanup") cleanup ;;
-    *) usage ;;
-esac

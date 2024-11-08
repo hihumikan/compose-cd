@@ -183,17 +183,16 @@ function update_repo() {
     remote_commit_link="[$remote_commit]($(git remote get-url "${git_remote}")/commit/${remote_commit})"
     compose_log notify "local(${local_commit_link}) -> remote(${remote_commit_link})"
     git pull "${git_remote}" "$branch"
+    local_commit=$(git rev-parse HEAD)
     if [ ! -e .compose-apply ]; then
         is_restart=true
     else
-        apply_list=".compose-cd
-    $(cat .compose-apply)"
+        apply_list=".compose-cd$(cat .compose-apply)"
         apply_list_expand=""
         for a in $apply_list; do
             local expand
             expand=$(find "$a" 2>/dev/null)
-            apply_list_expand="${apply_list_expand}
-        ${expand}"
+            apply_list_expand="${apply_list_expand}${expand}"
         done
         is_restart=false
         set -f

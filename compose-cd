@@ -2,7 +2,7 @@
 
 # バージョン情報
 COMPOSE_CD_VER_MAJOR='1'
-COMPOSE_CD_VER_MINOR='0'
+COMPOSE_CD_VER_MINOR='1' 
 COMPOSE_CD_VER_PATCH='0'
 COMPOSE_CD_VER_PRE=''
 
@@ -30,7 +30,7 @@ function usage() {
     echo "  uninstall   uninstall compose-cd"
     echo "  status      check status"
     echo "  update      update projects"
-    echo "  cleanup     cleanup container images"
+    echo "  cleanup     cleanup docker resources"
     echo "  check       perform daily Docker and API checks"
 }
 
@@ -43,7 +43,7 @@ function notify_slack() {
     msg="$2"
     username="$3"
     curl --silent -H "Accept: application/json" -H "Content-type: application/json" -X POST \
-        -d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook"
+        -d '{"username":"'"${username}"'","text":'"\"$msg\"}" "$webhook" >/dev/null 2>&1
 }
 
 # 通知関数
@@ -119,6 +119,9 @@ function load_config() {
         return
     fi
     source ./.compose-cd
+    if [ -z ${RESTART_WITH_BUILD+x} ]; then
+        RESTART_WITH_BUILD=false
+    fi
     if [ -z ${UPDATE_REPO_ONLY+x} ]; then UPDATE_REPO_ONLY=false; fi
     if [ -v RESTRICT_HOSTNAME_PATTERN ]; then
         if ! expr "$(hostname)" : "${RESTRICT_HOSTNAME_PATTERN}" >/dev/null; then
@@ -132,7 +135,7 @@ function load_config() {
 # サービス起動関数
 function service_up() {
     compose_log notify "starting service..."
-    if ! "$RESTART_WITH_BUILD"; then
+    if ! $RESTART_WITH_BUILD; then
         compose up -d 2>/dev/null
     else
         compose_log notify "start build..."
@@ -239,6 +242,9 @@ function project_update() {
     fi
     if [ $rr = 2 ]; then
         return
+    fi
+    if [ -z ${RESTART_WITH_BUILD+x} ]; then
+        RESTART_WITH_BUILD=false
     fi
     if [ -z ${BEFORE_RESTART+x} ]; then
         before_script=""
@@ -355,6 +361,11 @@ function check_services_and_notify() {
             slack_message+=":warning: APIステータスに異常があります。\nレスポンス: \`${api_response}\`\n"
         fi
     fi
+    local disk_usage
+    disk_usage=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+    if [ "$disk_usage" -ge 80 ]; then
+        slack_message+=":warning: ディスク使用率が高いです。現在の使用率: *${disk_usage}%*\n"
+    fi
     notify "$slack_message"
     compose_log echo "Daily check completed."
 }
@@ -411,7 +422,7 @@ REPO_GIT_REMOTE="origin"
 
 EOS
     load_global_config
-    compose_log notify "notify test" "[test] "
+    notify "notify test" "[test] "
     cp ./compose-cd /usr/bin/compose-cd
     cp ./compose-cd.service /etc/systemd/system/
     cp ./compose-cd.timer /etc/systemd/system/
@@ -491,8 +502,10 @@ function update() {
 
 # クリーンアップ関数
 function cleanup() {
-    compose_log echo "cleanup: container images"
-    docker image prune -a -f
+    compose_log echo "cleanup: removing unused Docker resources"
+    docker system prune -a --volumes -f
+    docker builder prune -a -f
+    compose_log notify "Docker resources cleaned up to free disk space."
 }
 
 # メインの処理

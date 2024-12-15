@@ -355,7 +355,7 @@ function check_services_and_notify() {
         status=$(echo "$api_response" | jq -r '.status')
         database=$(echo "$api_response" | jq -r '.database')
         timestamp=$(echo "$api_response" | jq -r '.timestamp')
-        if [ "$status" == "ok" ] && [ "$database" == "reachable" ]; then
+        if [ "$status" == "ok" ] && [ "$database" == "Available" ]; then
             slack_message+=":white_check_mark: APIステータス: *${status}*\n:database: データベース: *${database}*\n:clock1: タイムスタンプ: *${timestamp}*\n"
         else
             slack_message+=":warning: APIステータスに異常があります。\nレスポンス: \`${api_response}\`\n"
